@@ -1,0 +1,58 @@
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model User {
+  id        String    @id @default(uuid())
+  name      String
+  email     String    @unique
+  password  String
+  createdAt DateTime  @default(now()) @map("created_at")
+  projects  Project[]
+
+  @@map("users")
+}
+
+model Project {
+  id          String   @id @default(uuid())
+  userId      String   @map("user_id")
+  projectName String   @map("project_name")
+  githubUrl   String?  @map("github_url")
+  createdAt   DateTime @default(now()) @map("created_at")
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  reviews     Review[]
+
+  @@map("projects")
+}
+
+model Review {
+  id           String          @id @default(uuid())
+  projectId    String          @map("project_id")
+  reviewType   String          @map("review_type") // e.g. "snippet", "upload"
+  overallScore Int             @map("overall_score")
+  summary      String
+  createdAt    DateTime        @default(now()) @map("created_at")
+  project      Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  findings     ReviewFinding[]
+
+  @@map("reviews")
+}
+
+model ReviewFinding {
+  id           String   @id @default(uuid())
+  reviewId     String   @map("review_id")
+  severity     String // "error", "warning", "info"
+  issue        String
+  explanation  String
+  suggestedFix String   @map("suggested_fix")
+  fileName     String   @map("file_name")
+  lineNumber   Int      @map("line_number")
+  review       Review   @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+
+  @@map("review_findings")
+}
