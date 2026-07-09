@@ -2,6 +2,7 @@ import express, { Request, Response } from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import authRoutes from './routes/authRoutes';
+import reviewRoutes from './routes/reviewRoutes';
 
 dotenv.config();
 
@@ -11,8 +12,9 @@ const PORT = process.env.PORT || 5000;
 app.use(cors());
 app.use(express.json());
 
-// Auth routes
+// Routes
 app.use('/api/auth', authRoutes);
+app.use('/api/reviews', reviewRoutes);
 
 // Health check endpoint
 app.get('/api/health', (req: Request, res: Response) => {
