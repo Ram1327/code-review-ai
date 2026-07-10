@@ -9,11 +9,18 @@ import {
   Code2, 
   Upload, 
   FileCode, 
+  FolderOpen,
   ArrowRight, 
   AlertCircle, 
   CheckCircle2,
   Trash2
 } from 'lucide-react';
+
+interface SelectedFile {
+  path: string;
+  size: number;
+  content: string;
+}
 
 export default function NewReviewPage() {
   const { accessToken } = useAuth();
@@ -28,8 +35,9 @@ export default function NewReviewPage() {
   const [codeContent, setCodeContent] = useState('// Paste your code here\nfunction helloWorld() {\n  console.log("Hello, AI Reviewer!");\n}');
   
   // File Upload states
-  const [uploadedFile, setUploadedFile] = useState<{ name: string; size: number; content: string } | null>(null);
+  const [uploadedFiles, setUploadedFiles] = useState<SelectedFile[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const folderInputRef = useRef<HTMLInputElement>(null);
 
   // Common Form states
   const [loading, setLoading] = useState(false);
@@ -61,30 +69,52 @@ export default function NewReviewPage() {
     }
   };
 
-  // Handle file select
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    processFile(file);
+  // Process files recursively and read contents
+  const processFilesList = async (filesList: FileList) => {
+    const filesArray = Array.from(filesList);
+    const readFilesPromises = filesArray.map((file) => {
+      return new Promise<SelectedFile>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = (event) => {
+          // Use webkitRelativePath if directory, otherwise fall back to file.name
+          const relativePath = file.webkitRelativePath || file.name;
+          resolve({
+            path: relativePath,
+            size: file.size,
+            content: event.target?.result as string,
+          });
+        };
+        reader.onerror = (err) => reject(err);
+        reader.readAsText(file);
+      });
+    });
+
+    try {
+      const parsedFiles = await Promise.all(readFilesPromises);
+      setUploadedFiles((prev) => [...prev, ...parsedFiles]);
+
+      // Set language based on first file's extension if not set
+      if (parsedFiles.length > 0 && activeTab === 'upload') {
+        const detectedLang = detectLanguage(parsedFiles[0].path);
+        setLanguage(detectedLang);
+      }
+
+      // Auto-populate project name if empty
+      if (!projectName && parsedFiles.length > 0) {
+        const pathSegments = parsedFiles[0].path.split('/');
+        const rootFolder = pathSegments.length > 1 ? pathSegments[0] : '';
+        setProjectName(rootFolder ? `${rootFolder} Project` : 'Code Review Project');
+      }
+    } catch (err) {
+      setError('Error reading some uploaded files.');
+    }
   };
 
-  const processFile = (file: File) => {
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      const content = event.target?.result as string;
-      const detectedLang = detectLanguage(file.name);
-      setUploadedFile({
-        name: file.name,
-        size: file.size,
-        content
-      });
-      setLanguage(detectedLang);
-      // Auto-populate project name if empty
-      if (!projectName) {
-        setProjectName(file.name.split('.')[0] + ' Review');
-      }
-    };
-    reader.readAsText(file);
+  // Handle files selection
+  const handleFilesSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files) {
+      processFilesList(e.target.files);
+    }
   };
 
   // Drag and Drop handlers
@@ -94,17 +124,15 @@ export default function NewReviewPage() {
 
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
-    const file = e.dataTransfer.files?.[0];
-    if (file) {
-      processFile(file);
+    if (e.dataTransfer.files) {
+      processFilesList(e.dataTransfer.files);
     }
   };
 
-  const clearFile = () => {
-    setUploadedFile(null);
-    if (fileInputRef.current) {
-      fileInputRef.current.value = '';
-    }
+  const clearFilesList = () => {
+    setUploadedFiles([]);
+    if (fileInputRef.current) fileInputRef.current.value = '';
+    if (folderInputRef.current) folderInputRef.current.value = '';
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -120,29 +148,31 @@ export default function NewReviewPage() {
       return;
     }
 
-    let activeContent = '';
-    let reviewType: 'snippet' | 'upload' = 'snippet';
-    let fileName = 'snippet.txt';
+    let payload: any = {
+      projectName: activeProjectName,
+      language,
+      reviewType: activeTab === 'paste' ? 'snippet' : 'upload',
+    };
 
     if (activeTab === 'paste') {
-      activeContent = codeContent.trim();
-      reviewType = 'snippet';
-      fileName = `snippet.${language === 'python' ? 'py' : language === 'javascript' ? 'js' : 'ts'}`;
-    } else {
-      if (!uploadedFile) {
-        setError('Please select or upload a code file.');
+      const activeContent = codeContent.trim();
+      if (!activeContent) {
+        setError('Please enter code content.');
         setLoading(false);
         return;
       }
-      activeContent = uploadedFile.content;
-      reviewType = 'upload';
-      fileName = uploadedFile.name;
-    }
-
-    if (!activeContent) {
-      setError('Please provide code content to analyze.');
-      setLoading(false);
-      return;
+      payload.codeContent = activeContent;
+      payload.fileName = `snippet.${language === 'python' ? 'py' : language === 'javascript' ? 'js' : 'ts'}`;
+    } else {
+      if (uploadedFiles.length === 0) {
+        setError('Please select or upload folder files.');
+        setLoading(false);
+        return;
+      }
+      payload.files = uploadedFiles.map((f) => ({
+        path: f.path,
+        content: f.content,
+      }));
     }
 
     try {
@@ -152,13 +182,7 @@ export default function NewReviewPage() {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${accessToken}`,
         },
-        body: JSON.stringify({
-          projectName: activeProjectName,
-          language,
-          codeContent: activeContent,
-          reviewType,
-          fileName,
-        }),
+        body: JSON.stringify(payload),
       });
 
       const data = await res.json();
@@ -169,7 +193,7 @@ export default function NewReviewPage() {
         return;
       }
 
-      setSuccess('Code submitted successfully! Redirecting...');
+      setSuccess('Code submitted and analyzed successfully! Redirecting...');
       setTimeout(() => {
         router.push('/dashboard/history');
       }, 1500);
@@ -187,7 +211,7 @@ export default function NewReviewPage() {
           <Sparkles className="h-6 w-6 text-indigo-400" /> Start New Code Review
         </h1>
         <p className="text-slate-400 text-sm">
-          Paste snippet code directly or upload a single script file to begin your analysis.
+          Paste a single code snippet, upload individual scripts, or select an entire project folder to review.
         </p>
       </div>
 
@@ -228,7 +252,7 @@ export default function NewReviewPage() {
                 : 'text-slate-400 hover:text-white'
             }`}
           >
-            <Upload className="h-4 w-4" /> Upload File
+            <Upload className="h-4 w-4" /> Upload Files / Folders
           </button>
         </div>
 
@@ -248,10 +272,10 @@ export default function NewReviewPage() {
               />
             </div>
 
-            {/* Language dropdown (Only enabled for pasted code, auto-detected for files) */}
+            {/* Language dropdown */}
             <div className="space-y-1.5">
               <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider block">
-                {activeTab === 'paste' ? 'Select Language' : 'Detected Language'}
+                {activeTab === 'paste' ? 'Select Language' : 'Primary Language Detected'}
               </label>
               <select
                 value={language}
@@ -273,7 +297,7 @@ export default function NewReviewPage() {
           <div className="flex-1 flex flex-col min-h-[300px] border border-slate-800 rounded-xl overflow-hidden bg-slate-950">
             {activeTab === 'paste' ? (
               <Editor
-                height="350px"
+                height="380px"
                 language={language}
                 theme="vs-dark"
                 value={codeContent}
@@ -287,48 +311,88 @@ export default function NewReviewPage() {
                 }}
               />
             ) : (
-              <div 
-                onDragOver={handleDragOver}
-                onDrop={handleDrop}
-                className="flex-1 flex flex-col items-center justify-center p-8 text-center border-2 border-dashed border-slate-800 hover:border-indigo-500/40 rounded-xl transition-colors cursor-pointer"
-                onClick={() => !uploadedFile && fileInputRef.current?.click()}
-              >
-                <input 
-                  type="file"
-                  ref={fileInputRef}
-                  onChange={handleFileChange}
-                  className="hidden"
-                  accept=".js,.jsx,.ts,.tsx,.py,.html,.css,.json"
-                />
+              <div className="flex-1 flex flex-col p-6 space-y-6">
+                {/* Drag & Drop zone */}
+                <div 
+                  onDragOver={handleDragOver}
+                  onDrop={handleDrop}
+                  className="flex flex-col items-center justify-center py-10 text-center border-2 border-dashed border-slate-800 hover:border-indigo-500/40 rounded-xl transition-colors cursor-pointer bg-slate-950/40"
+                >
+                  <input 
+                    type="file"
+                    ref={fileInputRef}
+                    onChange={handleFilesSelect}
+                    className="hidden"
+                    multiple
+                    accept=".js,.jsx,.ts,.tsx,.py,.html,.css,.json"
+                  />
+                  {/* Standard Directory/Folder Input */}
+                  <input 
+                    type="file"
+                    ref={folderInputRef}
+                    onChange={handleFilesSelect}
+                    className="hidden"
+                    // @ts-ignore
+                    webkitdirectory=""
+                    directory=""
+                  />
 
-                {!uploadedFile ? (
                   <div className="space-y-4">
                     <div className="mx-auto bg-slate-900 border border-slate-800 p-4 rounded-2xl w-fit text-slate-400">
-                      <Upload className="h-8 w-8" />
+                      <Upload className="h-7 w-7" />
                     </div>
-                    <div className="space-y-1">
-                      <p className="text-sm font-semibold text-white">Drag and drop file here, or browse</p>
-                      <p className="text-xs text-slate-500">Supports JS, TS, PY, HTML, CSS, JSON (Max 5MB)</p>
+                    <div className="space-y-2">
+                      <p className="text-sm font-semibold text-white">Drag and drop folder / files here, or browse</p>
+                      <div className="flex justify-center gap-3 pt-1">
+                        <button
+                          type="button"
+                          onClick={() => fileInputRef.current?.click()}
+                          className="px-3.5 py-2 bg-slate-900 hover:bg-slate-800 border border-slate-800 text-xs font-semibold rounded-lg text-slate-200 flex items-center gap-1.5"
+                        >
+                          <FileCode className="h-3.5 w-3.5" /> Select Files
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => folderInputRef.current?.click()}
+                          className="px-3.5 py-2 bg-slate-900 hover:bg-slate-800 border border-slate-800 text-xs font-semibold rounded-lg text-slate-200 flex items-center gap-1.5"
+                        >
+                          <FolderOpen className="h-3.5 w-3.5" /> Select Folder
+                        </button>
+                      </div>
+                      <p className="text-2xs text-slate-500">Supports JS, TS, PY, HTML, CSS, JSON formats</p>
                     </div>
                   </div>
-                ) : (
-                  <div className="space-y-4 max-w-md w-full p-4 bg-slate-900/60 border border-slate-800 rounded-2xl flex items-center justify-between">
-                    <div className="flex items-center gap-3 min-w-0">
-                      <div className="bg-indigo-500/10 text-indigo-400 p-2.5 rounded-xl border border-indigo-500/20">
-                        <FileCode className="h-5 w-5" />
-                      </div>
-                      <div className="text-left min-w-0">
-                        <p className="text-sm font-semibold text-white truncate">{uploadedFile.name}</p>
-                        <p className="text-xs text-slate-500">{(uploadedFile.size / 1024).toFixed(1)} KB</p>
-                      </div>
+                </div>
+
+                {/* Selected Files List */}
+                {uploadedFiles.length > 0 && (
+                  <div className="space-y-3">
+                    <div className="flex justify-between items-center">
+                      <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider">
+                        Files to Analyze ({uploadedFiles.length})
+                      </h3>
+                      <button
+                        type="button"
+                        onClick={clearFilesList}
+                        className="inline-flex items-center gap-1 text-xs text-rose-400 hover:text-rose-300 font-medium"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" /> Clear All
+                      </button>
                     </div>
-                    <button 
-                      type="button"
-                      onClick={clearFile}
-                      className="p-2 rounded-lg border border-slate-800 text-slate-400 hover:text-rose-400 hover:bg-rose-950/20 transition-colors"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </button>
+
+                    <div className="max-h-48 overflow-y-auto border border-slate-800/80 rounded-xl divide-y divide-slate-800/40 bg-slate-950/20">
+                      {uploadedFiles.map((file, idx) => (
+                        <div key={idx} className="flex items-center justify-between p-3 text-xs">
+                          <div className="flex items-center gap-2.5 min-w-0">
+                            <FileCode className="h-4 w-4 text-indigo-400 shrink-0" />
+                            <span className="font-mono text-slate-300 truncate" title={file.path}>
+                              {file.path}
+                            </span>
+                          </div>
+                          <span className="text-slate-500 shrink-0">{(file.size / 1024).toFixed(1)} KB</span>
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 )}
               </div>
@@ -342,7 +406,7 @@ export default function NewReviewPage() {
               disabled={loading}
               className="inline-flex items-center gap-2 px-6 py-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-semibold text-sm transition-all shadow-lg shadow-indigo-600/30 group"
             >
-              {loading ? 'Submitting Code...' : 'Analyze Code'}
+              {loading ? 'Analyzing Code...' : 'Analyze Code'}
               {!loading && <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5" />}
             </button>
           </div>
