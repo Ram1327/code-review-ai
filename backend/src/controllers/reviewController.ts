@@ -40,6 +40,33 @@ const saveFilesToDisk = (userId: string, projectId: string, files: { path: strin
   return uploadDir;
 };
 
+// Recursive helper to read files from disk
+const readFilesRecursively = (dir: string, baseDir: string = dir): { path: string; content: string }[] => {
+  let results: { path: string; content: string }[] = [];
+  if (!fs.existsSync(dir)) return results;
+
+  const list = fs.readdirSync(dir);
+  for (const file of list) {
+    const fullPath = path.join(dir, file);
+    const stat = fs.statSync(fullPath);
+
+    if (stat && stat.isDirectory()) {
+      results = [...results, ...readFilesRecursively(fullPath, baseDir)];
+    } else {
+      try {
+        const content = fs.readFileSync(fullPath, 'utf8');
+        // Relative path from baseDir (with unified forward slashes)
+        const relativePath = path.relative(baseDir, fullPath).replace(/\\/g, '/');
+        results.push({ path: relativePath, content });
+      } catch (err) {
+        console.error(`Failed to read file: ${fullPath}`, err);
+      }
+    }
+  }
+
+  return results;
+};
+
 export const submitReview = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
     const parseResult = submitSchema.safeParse(req.body);
@@ -139,5 +166,59 @@ export const submitReview = async (req: AuthenticatedRequest, res: Response): Pr
     });
   } catch (error: any) {
     res.status(500).json({ error: error.message || 'Server error during review processing.' });
+  }
+};
+
+export const getReviewDetails = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  try {
+    const reviewId = req.params.id;
+    const userId = req.user?.userId;
+
+    if (!userId) {
+      res.status(401).json({ error: 'Unauthorized.' });
+      return;
+    }
+
+    // 1. Fetch Review including related Project details
+    const review = await prisma.review.findUnique({
+      where: { id: reviewId },
+      include: {
+        project: true,
+        findings: true,
+      },
+    });
+
+    if (!review) {
+      res.status(404).json({ error: 'Review not found.' });
+      return;
+    }
+
+    // 2. Validate Project ownership
+    if (review.project.userId !== userId) {
+      res.status(403).json({ error: 'You do not have permission to view this review.' });
+      return;
+    }
+
+    // 3. Read project files from disk recursively
+    const uploadDir = path.join(__dirname, '..', '..', 'uploads', userId, review.projectId);
+    const files = readFilesRecursively(uploadDir);
+
+    res.status(200).json({
+      review: {
+        id: review.id,
+        reviewType: review.reviewType,
+        overallScore: review.overallScore,
+        summary: review.summary,
+        createdAt: review.createdAt,
+        project: {
+          id: review.project.id,
+          projectName: review.project.projectName,
+        },
+        findings: review.findings,
+      },
+      files,
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message || 'Server error fetching review details.' });
   }
 };
