@@ -43,6 +43,10 @@ interface ReviewDetails {
   reviewType: string;
   overallScore: number;
   summary: string;
+  totalLoc?: number;
+  classCount?: number;
+  functionCount?: number;
+  complexityScore?: number;
   createdAt: string;
   project: {
     id: string;
@@ -343,6 +347,41 @@ export default function ReviewDetailsPage() {
                   <div className="p-3.5 bg-slate-950/40 border border-slate-800 rounded-xl text-center">
                     <span className="text-slate-500 text-3xs font-semibold uppercase tracking-wider block mb-1">Status</span>
                     <span className="text-xs font-semibold text-emerald-400 block pt-0.5">Checked</span>
+                  </div>
+                </div>
+
+                <div className="space-y-3">
+                  <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5 pt-2">
+                    <Shield className="h-4 w-4 text-indigo-400" /> Complexity & Structure Metrics
+                  </h3>
+                  <div className="grid grid-cols-2 gap-3 text-left">
+                    <div className="p-3.5 bg-slate-950/40 border border-slate-800 rounded-xl">
+                      <span className="text-slate-500 text-3xs font-semibold uppercase tracking-wider block">Lines of Code</span>
+                      <span className="text-lg font-bold text-white block mt-0.5">{review.totalLoc || 0}</span>
+                    </div>
+                    <div className="p-3.5 bg-slate-950/40 border border-slate-800 rounded-xl">
+                      <span className="text-slate-500 text-3xs font-semibold uppercase tracking-wider block">Total Functions</span>
+                      <span className="text-lg font-bold text-white block mt-0.5">{review.functionCount || 0}</span>
+                    </div>
+                    <div className="p-3.5 bg-slate-950/40 border border-slate-800 rounded-xl">
+                      <span className="text-slate-500 text-3xs font-semibold uppercase tracking-wider block">Total Classes</span>
+                      <span className="text-lg font-bold text-white block mt-0.5">{review.classCount || 0}</span>
+                    </div>
+                    <div className="p-3.5 bg-slate-950/40 border border-slate-800 rounded-xl flex justify-between items-center">
+                      <div>
+                        <span className="text-slate-500 text-3xs font-semibold uppercase tracking-wider block">Nesting Complexity</span>
+                        <span className="text-lg font-bold text-white block mt-0.5">{review.complexityScore || 0}</span>
+                      </div>
+                      <span className={`px-2 py-0.5 text-4xs font-bold uppercase rounded ${
+                        (review.complexityScore || 0) < 15 
+                          ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' 
+                          : (review.complexityScore || 0) < 40 
+                            ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20' 
+                            : 'bg-rose-500/10 text-rose-400 border border-rose-500/20'
+                      }`}>
+                        {(review.complexityScore || 0) < 15 ? 'Low' : (review.complexityScore || 0) < 40 ? 'Medium' : 'High'}
+                      </span>
+                    </div>
                   </div>
                 </div>
               </div>

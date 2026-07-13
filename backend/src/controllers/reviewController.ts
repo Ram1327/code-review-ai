@@ -5,6 +5,8 @@ import path from 'path';
 import prisma from '../config/db';
 import { AuthenticatedRequest } from '../middleware/auth';
 import { analyzeProjectFiles } from '../services/staticAnalysisService';
+import { calculateComplexity } from '../services/complexityService';
+import { runAICodeReview } from '../services/aiService';
 
 // Schema supports single pasted snippet OR list of uploaded files
 const submitSchema = z.object({
@@ -115,22 +117,38 @@ export const submitReview = async (req: AuthenticatedRequest, res: Response): Pr
     saveFilesToDisk(userId, project.id, targetFiles);
 
     // 3. Execute Static Code Analysis
-    const analysis = analyzeProjectFiles(targetFiles);
+    const staticAnalysis = analyzeProjectFiles(targetFiles);
 
-    // 4. Create Review in DB
+    // 4. Calculate Code Complexity Metrics
+    const complexityMetrics = calculateComplexity(targetFiles);
+
+    // 5. Execute Gemini AI Code Review
+    const aiAnalysis = await runAICodeReview(targetFiles);
+
+    // 6. Combine Score and Summary
+    const overallScore = Math.round((staticAnalysis.score + aiAnalysis.overallScore) / 2);
+    const combinedSummary = `[Static Check] ${staticAnalysis.summary}\n\n[AI Review] ${aiAnalysis.summary}`;
+
+    // 7. Create Review in DB with complexity metrics
     const review = await prisma.review.create({
       data: {
         projectId: project.id,
         reviewType,
-        overallScore: analysis.score,
-        summary: analysis.summary,
+        overallScore,
+        summary: combinedSummary,
+        totalLoc: complexityMetrics.totalLoc,
+        classCount: complexityMetrics.classCount,
+        functionCount: complexityMetrics.functionCount,
+        complexityScore: complexityMetrics.complexityScore,
       },
     });
 
-    // 5. Create ReviewFindings in DB
-    if (analysis.findings.length > 0) {
+    // 8. Consolidate and Create ReviewFindings in DB
+    const mergedFindings = [...staticAnalysis.findings, ...aiAnalysis.findings];
+    
+    if (mergedFindings.length > 0) {
       await prisma.reviewFinding.createMany({
-        data: analysis.findings.map((f) => ({
+        data: mergedFindings.map((f) => ({
           reviewId: review.id,
           severity: f.severity,
           issue: f.issue,
@@ -147,7 +165,7 @@ export const submitReview = async (req: AuthenticatedRequest, res: Response): Pr
           reviewId: review.id,
           severity: 'info',
           issue: 'Clean Analysis',
-          explanation: 'Your code compiles and passes all local syntax, formatting, and security audits.',
+          explanation: 'Your code compiles and passes all local static lints and AI semantic reviews.',
           suggestedFix: 'No fixes required.',
           fileName: targetFiles[0].path,
           lineNumber: 1,
@@ -160,8 +178,10 @@ export const submitReview = async (req: AuthenticatedRequest, res: Response): Pr
       project,
       review,
       analysisSummary: {
-        score: analysis.score,
-        findingsCount: analysis.findings.length,
+        score: overallScore,
+        findingsCount: mergedFindings.length,
+        totalLoc: complexityMetrics.totalLoc,
+        complexityScore: complexityMetrics.complexityScore,
       },
     });
   } catch (error: any) {
@@ -209,6 +229,10 @@ export const getReviewDetails = async (req: AuthenticatedRequest, res: Response)
         reviewType: review.reviewType,
         overallScore: review.overallScore,
         summary: review.summary,
+        totalLoc: review.totalLoc,
+        classCount: review.classCount,
+        functionCount: review.functionCount,
+        complexityScore: review.complexityScore,
         createdAt: review.createdAt,
         project: {
           id: review.project.id,

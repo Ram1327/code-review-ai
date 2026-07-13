@@ -31,14 +31,18 @@ model Project {
 }
 
 model Review {
-  id           String          @id @default(uuid())
-  projectId    String          @map("project_id")
-  reviewType   String          @map("review_type") // e.g. "snippet", "upload"
-  overallScore Int             @map("overall_score")
-  summary      String
-  createdAt    DateTime        @default(now()) @map("created_at")
-  project      Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  findings     ReviewFinding[]
+  id              String          @id @default(uuid())
+  projectId       String          @map("project_id")
+  reviewType      String          @map("review_type") // e.g. "snippet", "upload"
+  overallScore    Int             @map("overall_score")
+  summary         String
+  totalLoc        Int             @default(0) @map("total_loc")
+  classCount      Int             @default(0) @map("class_count")
+  functionCount   Int             @default(0) @map("function_count")
+  complexityScore Int             @default(0) @map("complexity_score")
+  createdAt       DateTime        @default(now()) @map("created_at")
+  project         Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  findings        ReviewFinding[]
 
   @@map("reviews")
 }
