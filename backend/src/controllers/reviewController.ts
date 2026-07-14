@@ -7,6 +7,7 @@ import { AuthenticatedRequest } from '../middleware/auth';
 import { analyzeProjectFiles } from '../services/staticAnalysisService';
 import { calculateComplexity } from '../services/complexityService';
 import { runAICodeReview } from '../services/aiService';
+import { GoogleGenerativeAI } from '@google/generative-ai';
 
 // Schema supports single pasted snippet OR list of uploaded files
 const submitSchema = z.object({
@@ -244,5 +245,99 @@ export const getReviewDetails = async (req: AuthenticatedRequest, res: Response)
     });
   } catch (error: any) {
     res.status(500).json({ error: error.message || 'Server error fetching review details.' });
+  }
+};
+
+export const getReviewDocs = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  try {
+    const reviewId = req.params.id;
+    const userId = req.user?.userId;
+
+    if (!userId) {
+      res.status(401).json({ error: 'Unauthorized.' });
+      return;
+    }
+
+    const review = await prisma.review.findUnique({
+      where: { id: reviewId },
+      include: { project: true },
+    });
+
+    if (!review) {
+      res.status(404).json({ error: 'Review not found.' });
+      return;
+    }
+
+    if (review.project.userId !== userId) {
+      res.status(403).json({ error: 'You do not have permission to view these docs.' });
+      return;
+    }
+
+    const uploadDir = path.join(__dirname, '..', '..', 'uploads', userId, review.projectId);
+    const files = readFilesRecursively(uploadDir);
+
+    const apiKey = process.env.GEMINI_API_KEY;
+
+    if (!apiKey || apiKey === 'PLACEHOLDER_KEY') {
+      const fileListMarkdown = files.map(f => `- \`${f.path}\` (${f.content.split('\n').length} LOC)`).join('\n');
+      const mockDocs = `# Documentation for Project: ${review.project.projectName}
+
+This is auto-generated markdown developer documentation compiled by **CodeReview.AI**.
+
+## Project Summary
+The project **${review.project.projectName}** consists of ${files.length} code files with a total of ${review.totalLoc} lines of code. The overall quality score of this project is **${review.overallScore}%** based on linting rules and AI reviews.
+
+## Directory Structure
+Below is the file hierarchy and details parsed in this upload:
+${fileListMarkdown}
+
+## Code Modules Reference
+Detailing exported classes and functions detected:
+- **Total Classes**: ${review.classCount}
+- **Total Functions**: ${review.functionCount}
+- **Nesting cyclomatic complexity score**: ${review.complexityScore}
+
+## Standard Setup Instructions
+1. Clone this repository locally.
+2. Initialize and configure the node workspace:
+   \`\`\`bash
+   npm install
+   \`\`\`
+3. Run test specs:
+   \`\`\`bash
+   npm test
+   \`\`\`
+`;
+      res.status(200).json({ docs: mockDocs });
+      return;
+    }
+
+    const genAI = new GoogleGenerativeAI(apiKey);
+    const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+
+    const codeContext = files.map(f => `FILE: ${f.path}\nCONTENT:\n${f.content}`).join('\n\n---\n\n');
+
+    const prompt = `You are an expert technical writer and software architect. Write a comprehensive and professional Markdown Documentation Guide (README.md) for the following project files.
+    
+    Project Name: ${review.project.projectName}
+    
+    Files:
+    ${codeContext}
+    
+    Your documentation MUST include:
+    1. A professional title and clean overview of what this project does.
+    2. A structured directory tree overview of the project files.
+    3. An API / Code Reference section detailing classes, export functions, and key methods.
+    4. Code usage snippets demonstrating how to run or use this project.
+    5. Clean formatting, code blocks, and lists in Markdown.
+    
+    Return ONLY the markdown documentation text.`;
+
+    const result = await model.generateContent(prompt);
+    const docs = result.response.text();
+
+    res.status(200).json({ docs });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message || 'Server error generating documentation.' });
   }
 };

@@ -69,9 +69,14 @@ export default function ReviewDetailsPage() {
   const [files, setFiles] = useState<UploadedFile[]>([]);
   const [selectedFile, setSelectedFile] = useState<UploadedFile | null>(null);
   
-  const [activeTab, setActiveTab] = useState<'summary' | 'findings' | 'analytics'>('summary');
+  const [activeTab, setActiveTab] = useState<'summary' | 'findings' | 'analytics' | 'documentation'>('summary');
   const [severityFilter, setSeverityFilter] = useState<string>('all');
   const [fileFilter, setFileFilter] = useState<string>('all');
+
+  const [docs, setDocs] = useState<string>('');
+  const [loadingDocs, setLoadingDocs] = useState<boolean>(false);
+  const [docsError, setDocsError] = useState<string | null>(null);
+  const [copied, setCopied] = useState<boolean>(false);
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -117,6 +122,33 @@ export default function ReviewDetailsPage() {
       fetchReviewDetails();
     }
   }, [id, accessToken]);
+
+  useEffect(() => {
+    const fetchDocs = async () => {
+      if (activeTab !== 'documentation' || docs) return;
+      setLoadingDocs(true);
+      setDocsError(null);
+      try {
+        const res = await fetch(`${API_URL}/reviews/${id}/docs`, {
+          headers: {
+            'Authorization': `Bearer ${accessToken}`,
+          },
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          setDocsError(data.error || 'Failed to fetch documentation.');
+        } else {
+          setDocs(data.docs);
+        }
+      } catch (err: any) {
+        setDocsError(err.message || 'Network error.');
+      } finally {
+        setLoadingDocs(false);
+      }
+    };
+
+    fetchDocs();
+  }, [activeTab, id, accessToken, docs]);
 
   const handleEditorDidMount = (editor: any) => {
     editorRef.current = editor;
@@ -294,7 +326,7 @@ export default function ReviewDetailsPage() {
         <div className="lg:col-span-2 bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden flex flex-col h-[580px] shadow-xl">
           {/* Tab buttons */}
           <div className="flex border-b border-slate-800 bg-slate-900/40 p-1.5 gap-1.5">
-            {['summary', 'findings', 'analytics'].map((tab) => (
+            {['summary', 'findings', 'analytics', 'documentation'].map((tab) => (
               <button
                 key={tab}
                 onClick={() => setActiveTab(tab as any)}
@@ -537,6 +569,77 @@ export default function ReviewDetailsPage() {
                     </div>
                   )}
                 </div>
+              </div>
+            )}
+
+            {/* DOCUMENTATION TAB */}
+            {activeTab === 'documentation' && (
+              <div className="space-y-4">
+                {loadingDocs ? (
+                  <div className="flex flex-col items-center justify-center py-20 gap-3">
+                    <div className="h-8 w-8 animate-spin rounded-full border-4 border-indigo-600 border-t-transparent"></div>
+                    <p className="text-slate-400 text-xs animate-pulse">Generating developer guides...</p>
+                  </div>
+                ) : docsError ? (
+                  <div className="text-center py-10 space-y-3">
+                    <AlertTriangle className="h-8 w-8 text-rose-500 mx-auto" />
+                    <p className="text-xs text-rose-400 font-semibold">{docsError}</p>
+                    <button 
+                      onClick={() => { setDocs(''); setActiveTab('documentation'); }} 
+                      className="px-3 py-1.5 bg-slate-950 border border-slate-800 rounded-lg text-2xs font-semibold text-white hover:bg-slate-800"
+                    >
+                      Retry Generation
+                    </button>
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    {/* Controls */}
+                    <div className="flex justify-end gap-2.5 pb-2 border-b border-slate-800/80">
+                      <button
+                        onClick={() => {
+                          navigator.clipboard.writeText(docs);
+                          setCopied(true);
+                          setTimeout(() => setCopied(false), 2000);
+                        }}
+                        className="px-3 py-1.5 bg-slate-950 border border-slate-800 rounded-lg text-2xs font-bold text-white hover:border-slate-600 transition-colors flex items-center gap-1.5"
+                      >
+                        {copied ? (
+                          <>
+                            <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" /> Copied!
+                          </>
+                        ) : (
+                          <>
+                            <Sparkles className="h-3.5 w-3.5 text-indigo-400" /> Copy Markdown
+                          </>
+                        )}
+                      </button>
+
+                      <button
+                        onClick={() => {
+                          const blob = new Blob([docs], { type: 'text/markdown' });
+                          const url = URL.createObjectURL(blob);
+                          const a = document.createElement('a');
+                          a.href = url;
+                          a.download = `${review?.project?.projectName.replace(/\s+/g, '_')}_README.md`;
+                          document.body.appendChild(a);
+                          a.click();
+                          document.body.removeChild(a);
+                          URL.revokeObjectURL(url);
+                        }}
+                        className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 rounded-lg text-2xs font-bold text-white transition-colors flex items-center gap-1.5"
+                      >
+                        <FileCode className="h-3.5 w-3.5" /> Download .md
+                      </button>
+                    </div>
+
+                    {/* Markdown Body */}
+                    <div className="text-left">
+                      <pre className="whitespace-pre-wrap font-sans text-slate-300 leading-relaxed text-xs bg-slate-950/40 p-4 rounded-xl border border-slate-800 font-normal max-h-[420px] overflow-y-auto">
+                        {docs}
+                      </pre>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </div>
