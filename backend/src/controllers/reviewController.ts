@@ -1,4 +1,4 @@
-import { Response } from 'express';
+import { Response, Request } from 'express';
 import { z } from 'zod';
 import fs from 'fs';
 import path from 'path';
@@ -8,6 +8,9 @@ import { analyzeProjectFiles } from '../services/staticAnalysisService';
 import { calculateComplexity } from '../services/complexityService';
 import { runAICodeReview } from '../services/aiService';
 import { GoogleGenerativeAI } from '@google/generative-ai';
+
+// Whitelisted code file extensions
+const CODE_EXTENSIONS = ['.js', '.jsx', '.ts', '.tsx', '.py', '.html', '.css', '.json'];
 
 // Schema supports single pasted snippet OR list of uploaded files
 const submitSchema = z.object({
@@ -103,7 +106,27 @@ export const submitReview = async (req: AuthenticatedRequest, res: Response): Pr
         res.status(400).json({ error: 'Files array cannot be empty for file upload reviews.' });
         return;
       }
-      targetFiles = files;
+
+      // Day 12: Payload Size and Extension Whitelist Constraints
+      let totalSize = 0;
+      targetFiles = files.filter((f) => {
+        const ext = path.extname(f.path).toLowerCase();
+        totalSize += Buffer.byteLength(f.content, 'utf8');
+        return CODE_EXTENSIONS.includes(ext);
+      });
+
+      if (targetFiles.length === 0) {
+        res.status(400).json({ 
+          error: 'No valid source code files detected. Whitelisted formats: .js, .jsx, .ts, .tsx, .py, .html, .css, .json' 
+        });
+        return;
+      }
+
+      // Reject uploads exceeding 5MB
+      if (totalSize > 5 * 1024 * 1024) {
+        res.status(400).json({ error: 'Total project payload exceeds the 5MB upload size limit.' });
+        return;
+      }
     }
 
     // 1. Create Project in DB
@@ -339,5 +362,114 @@ Detailing exported classes and functions detected:
     res.status(200).json({ docs });
   } catch (error: any) {
     res.status(500).json({ error: error.message || 'Server error generating documentation.' });
+  }
+};
+
+export const getUserReviews = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  try {
+    const userId = req.user?.userId;
+    if (!userId) {
+      res.status(401).json({ error: 'Unauthorized.' });
+      return;
+    }
+
+    const { search, scoreRating, reviewType, sortBy, order } = req.query;
+
+    const whereClause: any = {
+      project: {
+        userId: userId,
+      },
+    };
+
+    if (search) {
+      whereClause.project.projectName = {
+        contains: String(search),
+      };
+    }
+
+    if (reviewType && reviewType !== 'all') {
+      whereClause.reviewType = String(reviewType);
+    }
+
+    if (scoreRating && scoreRating !== 'all') {
+      if (scoreRating === 'high') {
+        whereClause.overallScore = { gte: 80 };
+      } else if (scoreRating === 'medium') {
+        whereClause.overallScore = { gte: 60, lt: 80 };
+      } else if (scoreRating === 'low') {
+        whereClause.overallScore = { lt: 60 };
+      }
+    }
+
+    let orderByClause: any = { createdAt: 'desc' };
+
+    if (sortBy) {
+      const direction = order === 'asc' ? 'asc' : 'desc';
+      if (sortBy === 'score') {
+        orderByClause = { overallScore: direction };
+      } else if (sortBy === 'date') {
+        orderByClause = { createdAt: direction };
+      }
+    }
+
+    const reviews = await prisma.review.findMany({
+      where: whereClause,
+      include: {
+        project: true,
+      },
+      orderBy: orderByClause,
+    });
+
+    res.status(200).json(reviews);
+  } catch (error: any) {
+    res.status(500).json({ error: error.message || 'Server error fetching reviews history.' });
+  }
+};
+
+export const deleteReview = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  try {
+    const reviewId = req.params.id;
+    const userId = req.user?.userId;
+
+    if (!userId) {
+      res.status(401).json({ error: 'Unauthorized.' });
+      return;
+    }
+
+    const review = await prisma.review.findUnique({
+      where: { id: reviewId },
+      include: { project: true },
+    });
+
+    if (!review) {
+      res.status(404).json({ error: 'Review not found.' });
+      return;
+    }
+
+    if (review.project.userId !== userId) {
+      res.status(403).json({ error: 'You do not have permission to delete this review.' });
+      return;
+    }
+
+    // 1. Delete associated files on disk recursively
+    const uploadDir = path.join(__dirname, '..', '..', 'uploads', userId, review.projectId);
+    if (fs.existsSync(uploadDir)) {
+      try {
+        fs.rmSync(uploadDir, { recursive: true, force: true });
+      } catch (err) {
+        console.error(`Failed to delete uploads directory: ${uploadDir}`, err);
+      }
+    }
+
+    // 2. Delete Project (which cascades and deletes the Review due to database relation onDelete rules,
+    // or delete Review directly which cascades to findings)
+    // Note: Project owns the files and holds the project name. We can delete the project directly.
+    await prisma.project.delete({
+      where: { id: review.projectId },
+    });
+
+    res.status(200).json({ message: 'Review and project directories successfully deleted.' });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message || 'Server error deleting review.' });
   }
 };

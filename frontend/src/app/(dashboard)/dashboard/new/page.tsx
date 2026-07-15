@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import Editor from '@monaco-editor/react';
 import { useAuth } from '@/context/AuthContext';
@@ -41,6 +41,7 @@ export default function NewReviewPage() {
 
   // Common Form states
   const [loading, setLoading] = useState(false);
+  const [submittingStep, setSubmittingStep] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
@@ -71,12 +72,32 @@ export default function NewReviewPage() {
 
   // Process files recursively and read contents
   const processFilesList = async (filesList: FileList) => {
+    setError(null);
     const filesArray = Array.from(filesList);
-    const readFilesPromises = filesArray.map((file) => {
+    
+    // Day 12: Whitelist code files and check size limit (5MB)
+    const CODE_EXTENSIONS = ['.js', '.jsx', '.ts', '.tsx', '.py', '.html', '.css', '.json'];
+    let totalSize = 0;
+    const codeFiles = filesArray.filter(file => {
+      const ext = '.' + file.name.split('.').pop()?.toLowerCase();
+      totalSize += file.size;
+      return CODE_EXTENSIONS.includes(ext);
+    });
+
+    if (codeFiles.length === 0) {
+      setError('No valid source code files detected. Whitelisted formats: .js, .jsx, .ts, .tsx, .py, .html, .css, .json');
+      return;
+    }
+
+    if (totalSize > 5 * 1024 * 1024) {
+      setError('Total upload size exceeds the 5MB payload limit.');
+      return;
+    }
+
+    const readFilesPromises = codeFiles.map((file) => {
       return new Promise<SelectedFile>((resolve, reject) => {
         const reader = new FileReader();
         reader.onload = (event) => {
-          // Use webkitRelativePath if directory, otherwise fall back to file.name
           const relativePath = file.webkitRelativePath || file.name;
           resolve({
             path: relativePath,
@@ -93,13 +114,11 @@ export default function NewReviewPage() {
       const parsedFiles = await Promise.all(readFilesPromises);
       setUploadedFiles((prev) => [...prev, ...parsedFiles]);
 
-      // Set language based on first file's extension if not set
       if (parsedFiles.length > 0 && activeTab === 'upload') {
         const detectedLang = detectLanguage(parsedFiles[0].path);
         setLanguage(detectedLang);
       }
 
-      // Auto-populate project name if empty
       if (!projectName && parsedFiles.length > 0) {
         const pathSegments = parsedFiles[0].path.split('/');
         const rootFolder = pathSegments.length > 1 ? pathSegments[0] : '';
@@ -139,12 +158,10 @@ export default function NewReviewPage() {
     e.preventDefault();
     setError(null);
     setSuccess(null);
-    setLoading(true);
 
     const activeProjectName = projectName.trim();
     if (!activeProjectName) {
       setError('Please provide a project name.');
-      setLoading(false);
       return;
     }
 
@@ -158,7 +175,6 @@ export default function NewReviewPage() {
       const activeContent = codeContent.trim();
       if (!activeContent) {
         setError('Please enter code content.');
-        setLoading(false);
         return;
       }
       payload.codeContent = activeContent;
@@ -166,7 +182,6 @@ export default function NewReviewPage() {
     } else {
       if (uploadedFiles.length === 0) {
         setError('Please select or upload folder files.');
-        setLoading(false);
         return;
       }
       payload.files = uploadedFiles.map((f) => ({
@@ -174,6 +189,16 @@ export default function NewReviewPage() {
         content: f.content,
       }));
     }
+
+    // Trigger full-screen submission progress indicator overlay
+    setLoading(true);
+    setSubmittingStep(1);
+
+    // Timers simulating progress pipeline
+    const t2 = setTimeout(() => setSubmittingStep(2), 1200);
+    const t3 = setTimeout(() => setSubmittingStep(3), 2400);
+    const t4 = setTimeout(() => setSubmittingStep(4), 4000);
+    const t5 = setTimeout(() => setSubmittingStep(5), 5800);
 
     try {
       const res = await fetch(`${API_URL}/reviews/submit`, {
@@ -188,23 +213,81 @@ export default function NewReviewPage() {
       const data = await res.json();
 
       if (!res.ok) {
+        // Cancel all simulation timers
+        clearTimeout(t2);
+        clearTimeout(t3);
+        clearTimeout(t4);
+        clearTimeout(t5);
+
         setError(data.error || 'Failed to submit review.');
         setLoading(false);
+        setSubmittingStep(0);
         return;
       }
 
+      setSubmittingStep(6); // Finish complete state
       setSuccess('Code submitted and analyzed successfully! Redirecting...');
       setTimeout(() => {
         router.push('/dashboard/history');
-      }, 1500);
+      }, 1000);
     } catch (err: any) {
+      clearTimeout(t2);
+      clearTimeout(t3);
+      clearTimeout(t4);
+      clearTimeout(t5);
+
       setError(err.message || 'Network error during submission.');
       setLoading(false);
+      setSubmittingStep(0);
     }
   };
 
   return (
     <div className="space-y-6 max-w-5xl animate-fadeIn">
+      {/* Fullscreen Submission Progress Overlay */}
+      {loading && (
+        <div className="fixed inset-0 bg-slate-950/85 backdrop-blur-md flex items-center justify-center z-50 animate-fadeIn text-center">
+          <div className="bg-slate-900 border border-slate-800 p-8 rounded-2xl max-w-md w-full space-y-6 shadow-2xl">
+            <div className="h-12 w-12 border-4 border-indigo-500 border-t-transparent animate-spin rounded-full mx-auto"></div>
+            
+            <div className="space-y-2">
+              <h2 className="text-lg font-bold text-white tracking-wide">Orchestrating Review Pipeline</h2>
+              <p className="text-xs text-slate-400">Our engines are auditing your code files, calculating complexity vectors, and drafting AI suggestions.</p>
+            </div>
+
+            {/* Steps Checklist */}
+            <div className="space-y-3.5 text-left border-t border-slate-850 pt-5">
+              {[
+                { step: 1, label: 'Reading project files & metadata' },
+                { step: 2, label: 'Running static diagnostic audits' },
+                { step: 3, label: 'Calculating complexity score metrics' },
+                { step: 4, label: 'Running Gemini semantic code review' },
+                { step: 5, label: 'Compiling dashboard visualization reports' }
+              ].map(item => {
+                const isActive = submittingStep === item.step;
+                const isCompleted = submittingStep > item.step;
+                return (
+                  <div key={item.step} className="flex items-center gap-3 text-xs">
+                    <div className={`h-5 w-5 rounded-full flex items-center justify-center border shrink-0 text-3xs font-bold transition-all ${
+                      isCompleted 
+                        ? 'bg-emerald-500/10 border-emerald-500 text-emerald-400' 
+                        : isActive 
+                          ? 'bg-indigo-500/10 border-indigo-505 text-indigo-400 animate-pulse font-extraboldScale' 
+                          : 'bg-slate-950 border-slate-850 text-slate-500'
+                    }`}>
+                      {isCompleted ? '✓' : item.step}
+                    </div>
+                    <span className={isCompleted ? 'text-slate-400 font-medium line-through' : isActive ? 'text-white font-semibold' : 'text-slate-500 font-normal'}>
+                      {item.label}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Top Heading */}
       <div className="space-y-2">
         <h1 className="text-3xl font-bold tracking-tight text-white flex items-center gap-2">
@@ -311,7 +394,7 @@ export default function NewReviewPage() {
                 }}
               />
             ) : (
-              <div className="flex-1 flex flex-col p-6 space-y-6">
+              <div className="flex-1 flex flex-col p-6 space-y-6 bg-slate-950/40">
                 {/* Drag & Drop zone */}
                 <div 
                   onDragOver={handleDragOver}
@@ -326,7 +409,6 @@ export default function NewReviewPage() {
                     multiple
                     accept=".js,.jsx,.ts,.tsx,.py,.html,.css,.json"
                   />
-                  {/* Standard Directory/Folder Input */}
                   <input 
                     type="file"
                     ref={folderInputRef}
