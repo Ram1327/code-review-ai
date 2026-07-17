@@ -18,15 +18,19 @@ export const metadata: Metadata = {
   description: "Improve code quality using static analysis and generative AI.",
 };
 
+import { ThemeProvider } from "@/context/ThemeContext";
+
 export default function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className="h-full bg-slate-950 text-slate-100">
+    <html lang="en" className="h-full">
       <body className={`${geistSans.variable} ${geistMono.variable} h-full antialiased font-sans`}>
-        <AuthProvider>{children}</AuthProvider>
+        <ThemeProvider>
+          <AuthProvider>{children}</AuthProvider>
+        </ThemeProvider>
       </body>
     </html>
   );

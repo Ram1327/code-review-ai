@@ -12,8 +12,11 @@ import {
   LogOut, 
   ChevronLeft, 
   ChevronRight,
-  Sparkles
+  Sparkles,
+  Sun,
+  Moon
 } from 'lucide-react';
+import { useTheme } from '@/context/ThemeContext';
 
 interface SidebarProps {
   collapsed: boolean;
@@ -23,6 +26,7 @@ interface SidebarProps {
 export const Sidebar: React.FC<SidebarProps> = ({ collapsed, setCollapsed }) => {
   const pathname = usePathname();
   const { user, logout } = useAuth();
+  const { theme, toggleTheme } = useTheme();
 
   const menuItems = [
     { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
@@ -86,9 +90,28 @@ export const Sidebar: React.FC<SidebarProps> = ({ collapsed, setCollapsed }) => 
       </div>
 
       {/* Bottom Profile and Logout Section */}
-      <div className="p-4 border-t border-slate-800 space-y-4">
+      <div className="p-4 border-t border-slate-800 space-y-3">
+        {/* Theme Switcher Button */}
+        <button
+          onClick={toggleTheme}
+          className="flex items-center gap-3 w-full px-3 py-2.5 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800/60 transition-all duration-200 group"
+          title={theme === 'light' ? 'Switch to Dark Mode' : 'Switch to Light Mode'}
+        >
+          {theme === 'light' ? (
+            <>
+              <Moon className="h-5 w-5 shrink-0 group-hover:scale-105" />
+              {!collapsed && <span className="text-sm font-medium tracking-wide">Dark Mode</span>}
+            </>
+          ) : (
+            <>
+              <Sun className="h-5 w-5 shrink-0 group-hover:scale-105 text-amber-400 animate-pulse" />
+              {!collapsed && <span className="text-sm font-medium tracking-wide">Light Mode</span>}
+            </>
+          )}
+        </button>
+
         {!collapsed && user && (
-          <div className="flex items-center gap-3 px-2 py-1 overflow-hidden">
+          <div className="flex items-center gap-3 px-2 py-1 overflow-hidden border-t border-slate-850 pt-3">
             <div className="h-9 w-9 rounded-full bg-slate-800 border border-indigo-500/30 flex items-center justify-center text-indigo-400 font-semibold shrink-0">
               {user.name.charAt(0).toUpperCase()}
             </div>
@@ -100,7 +123,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ collapsed, setCollapsed }) => 
         )}
         <button
           onClick={logout}
-          className={`flex items-center gap-3 w-full px-3 py-3 rounded-xl text-rose-400 hover:text-rose-300 hover:bg-rose-950/20 transition-all duration-200 group`}
+          className={`flex items-center gap-3 w-full px-3 py-2.5 rounded-xl text-rose-400 hover:text-rose-300 hover:bg-rose-950/20 transition-all duration-200 group`}
         >
           <LogOut className="h-5 w-5 shrink-0 group-hover:scale-105" />
           {!collapsed && (

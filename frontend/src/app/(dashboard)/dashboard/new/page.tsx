@@ -45,7 +45,7 @@ export default function NewReviewPage() {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
-  const API_URL = 'http://localhost:5000/api';
+  const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api';
 
   // Helper to map file extensions to editor languages
   const detectLanguage = (fileName: string): string => {

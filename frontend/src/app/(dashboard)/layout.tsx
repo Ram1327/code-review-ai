@@ -38,7 +38,7 @@ export default function DashboardLayout({
   }
 
   return (
-    <div className="flex min-h-screen bg-slate-950 text-slate-100 relative">
+    <div className="flex min-h-screen bg-[var(--background)] text-[var(--foreground)] relative">
       {/* Sidebar - Desktop */}
       <div className="hidden md:block">
         <Sidebar collapsed={collapsed} setCollapsed={setCollapsed} />
